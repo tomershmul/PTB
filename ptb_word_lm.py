@@ -1,33 +1,4 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
 """Example / benchmark for building a PTB LSTM model.
-
-Trains the model described in:
-(Zaremba, et. al.) Recurrent Neural Network Regularization
-http://arxiv.org/abs/1409.2329
-
-There are 3 supported model configurations:
-===========================================
-| config | epochs | train | valid  | test
-===========================================
-| small  | 13     | 37.99 | 121.39 | 115.91
-| medium | 39     | 48.45 |  86.16 |  82.07
-| large  | 55     | 37.87 |  82.62 |  78.29
-The exact results may vary depending on the random initialization.
-
 The hyperparameters used in the model:
 - init_scale - the initial scale of the weights
 - learning_rate - the initial value of the learning rate
@@ -43,15 +14,7 @@ The hyperparameters used in the model:
 - rnn_mode - the low level implementation of lstm cell: one of CUDNN,
              BASIC, or BLOCK, representing cudnn_lstm, basic_lstm, and
              lstm_block_cell classes.
-
-The data required for this example is in the data/ dir of the
-PTB dataset from Tomas Mikolov's webpage:
-
-$ wget http://www.fit.vutbr.cz/~imikolov/rnnlm/simple-examples.tgz
-$ tar xvf simple-examples.tgz
-
 To run:
-
 $ python ptb_word_lm.py --data_path=simple-examples/data/
 --data_path=/home/amir/tau/deep_learning/ptb/ --save_path=/home/amir/tau/deep_learning/ptb/save_path --num_gpus=0
 """
@@ -71,27 +34,23 @@ from tensorflow.python.client import device_lib
 
 flags = tf.flags
 logging = tf.logging
-
-# flags.DEFINE_string(
-#     "model", "small",
-#     "A type of model. Possible options are: small, medium, large.")
-# flags.DEFINE_string("data_path", None,
-#                     "Where the training/test data is stored.")
-# flags.DEFINE_string("save_path", None,
-#                     "Model output directory.")
-# flags.DEFINE_integer("num_gpus", 1,
-#                      "If larger than 1, Grappler AutoParallel optimizer "
-#                      "will create multiple training replicas with each GPU "
-#                      "running one replica.")
-# flags.DEFINE_string("rnn_mode", None,
-#                     "The low level implementation of lstm cell: one of CUDNN, "
-#                     "BASIC, and BLOCK, representing cudnn_lstm, basic_lstm, "
-#                     "and lstm_block_cell classes.")
 FLAGS = flags.FLAGS
-BASIC = "basic"
-CUDNN = "cudnn"
-#BLOCK = "block"
 
+class ModelConfig(object):
+  """Small config."""
+  init_scale = 0.1
+  learning_rate = 1.0
+  max_grad_norm = 5
+  num_layers = 2
+  num_steps = 20
+  hidden_size = 200
+  max_epoch = 4
+  max_max_epoch = 1 #13
+  keep_prob = 1.0
+  lr_decay = 0.5
+  batch_size = 20
+  vocab_size = 10000
+  is_GRU = False
 
 class PTBInput(object):
   """The input data."""
@@ -118,8 +77,7 @@ class PTBModel(object):
     vocab_size = config.vocab_size
 
     with tf.device("/cpu:0"):
-      embedding = tf.get_variable(
-          "embedding", [vocab_size, size], dtype=tf.float32)
+      embedding = tf.get_variable("embedding", [vocab_size, size], dtype=tf.float32)
       inputs = tf.nn.embedding_lookup(embedding, input_.input_data)
 
     if is_training and config.keep_prob < 1:
@@ -127,11 +85,10 @@ class PTBModel(object):
 
     output, state = self._build_rnn_graph(inputs, config, is_training)
 
-    softmax_w = tf.get_variable(
-        "softmax_w", [size, vocab_size], dtype=tf.float32)
+    softmax_w = tf.get_variable("softmax_w", [size, vocab_size], dtype=tf.float32)
     softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=tf.float32)
     logits = tf.nn.xw_plus_b(output, softmax_w, softmax_b)
-     # Reshape logits to be a 3-D tensor for sequence loss
+    # Reshape logits to be a 3-D tensor for sequence loss
     logits = tf.reshape(logits, [self.batch_size, self.num_steps, vocab_size])
 
     # Use the contrib sequence loss and average over the batches
@@ -151,65 +108,28 @@ class PTBModel(object):
 
     self._lr = tf.Variable(0.0, trainable=False)
     tvars = tf.trainable_variables()
-    grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars),
-                                      config.max_grad_norm)
+    grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars), config.max_grad_norm)
     optimizer = tf.train.GradientDescentOptimizer(self._lr)
-    self._train_op = optimizer.apply_gradients(
-        zip(grads, tvars),
-        global_step=tf.train.get_or_create_global_step())
+    self._train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=tf.train.get_or_create_global_step())
 
-    self._new_lr = tf.placeholder(
-        tf.float32, shape=[], name="new_learning_rate")
+    self._new_lr = tf.placeholder(tf.float32, shape=[], name="new_learning_rate")
     self._lr_update = tf.assign(self._lr, self._new_lr)
 
   def _build_rnn_graph(self, inputs, config, is_training):
-    # if config.rnn_mode == CUDNN:
-    #   return self._build_rnn_graph_cudnn(inputs, config, is_training)
-    # else:
-    return self._build_rnn_graph_lstm(inputs, config, is_training)
-
-  def _get_lstm_cell(self, config, is_training):
-    # if config.rnn_mode == BASIC:
-    return tf.contrib.rnn.BasicLSTMCell(
-          config.hidden_size, forget_bias=0.0, state_is_tuple=True,
-          reuse=not is_training)
-    # if config.rnn_mode == BLOCK:
-    #return tf.contrib.rnn.LSTMBlockCell(
-    #      config.hidden_size, forget_bias=0.0)
-    # raise ValueError("rnn_mode %s not supported" % config.rnn_mode)
-
-  def _build_rnn_graph_lstm(self, inputs, config, is_training):
-    """Build the inference graph using canonical LSTM cells."""
-    # Slightly better results can be obtained with forget gate biases
-    # initialized to 1 but the hyperparameters of the model would need to be
-    # different than reported in the paper.
+    """Build the inference graph using LSTM / GRU cells."""
     def make_cell():
-      cell = self._get_lstm_cell(config, is_training)
+      if config.is_GRU:
+        cell = tf.contrib.rnn.GRUCell(config.hidden_size, reuse=not is_training)
+      else:
+        cell = tf.contrib.rnn.LSTMCell(config.hidden_size, forget_bias=0.0, state_is_tuple=True, reuse=not is_training)
       if is_training and config.keep_prob < 1:
-        cell = tf.contrib.rnn.DropoutWrapper(
-            cell, output_keep_prob=config.keep_prob)
+        cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=config.keep_prob)
       return cell
 
-    cell = tf.contrib.rnn.MultiRNNCell(
-        [make_cell() for _ in range(config.num_layers)], state_is_tuple=True)
-
+    cell = tf.contrib.rnn.MultiRNNCell([make_cell() for _ in range(config.num_layers)], state_is_tuple=True)
     self._initial_state = cell.zero_state(config.batch_size, tf.float32)
-    state = self._initial_state
-    # Simplified version of tf.nn.static_rnn().
-    # This builds an unrolled LSTM for tutorial purposes only.
-    # In general, use tf.nn.static_rnn() or tf.nn.static_state_saving_rnn().
-    #
-    # The alternative version of the code below is:
-    #
-    # inputs = tf.unstack(inputs, num=self.num_steps, axis=1)
-    # outputs, state = tf.nn.static_rnn(cell, inputs,
-    #                                   initial_state=self._initial_state)
-    outputs = []
-    with tf.variable_scope("RNN"):
-      for time_step in range(self.num_steps):
-        if time_step > 0: tf.get_variable_scope().reuse_variables()
-        (cell_output, state) = cell(inputs[:, time_step, :], state)
-        outputs.append(cell_output)
+    inputs = tf.unstack(inputs, num=self.num_steps, axis=1)
+    outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=self._initial_state)
     output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
     return output, state
 
@@ -249,10 +169,8 @@ class PTBModel(object):
         tf.add_to_collection(tf.GraphKeys.SAVEABLE_OBJECTS, params_saveable)
     self._cost = tf.get_collection_ref(util.with_prefix(self._name, "cost"))[0]
     #num_replicas = FLAGS.num_gpus if self._name == "Train" else 1
-    self._initial_state = util.import_state_tuples(
-        self._initial_state, self._initial_state_name, 1)
-    self._final_state = util.import_state_tuples(
-        self._final_state, self._final_state_name, 1)
+    self._initial_state = util.import_state_tuples(self._initial_state, self._initial_state_name, 1)
+    self._final_state = util.import_state_tuples(self._final_state, self._final_state_name, 1)
 
   @property
   def input(self):
@@ -286,43 +204,26 @@ class PTBModel(object):
   def final_state_name(self):
     return self._final_state_name
 
-
-class ModelConfig(object):
-  """Small config."""
-  init_scale = 0.1
-  learning_rate = 1.0
-  max_grad_norm = 5
-  num_layers = 2
-  num_steps = 20
-  hidden_size = 200
-  max_epoch = 4
-  max_max_epoch = 1 #13
-  keep_prob = 1.0
-  lr_decay = 0.5
-  batch_size = 20
-  vocab_size = 10000
-  #rnn_mode = BLOCK
-
-
-def run_epoch(session, model, eval_op=None, verbose=False):
+def run_epoch(session, model, config, eval_op=None, verbose=False):
   """Runs the model on the given data."""
   start_time = time.time()
   costs = 0.0
   iters = 0
   state = session.run(model.initial_state)
 
-  fetches = {
-      "cost": model.cost,
-      "final_state": model.final_state,
-  }
+  fetches = {"cost": model.cost, "final_state": model.final_state}
   if eval_op is not None:
     fetches["eval_op"] = eval_op
 
   for step in range(model.input.epoch_size):
     feed_dict = {}
-    for i, (c, h) in enumerate(model.initial_state):
-      feed_dict[c] = state[i].c
-      feed_dict[h] = state[i].h
+    if config.is_GRU:
+      feed_dict[model.initial_state[0]] = state[0]
+      feed_dict[model.initial_state[1]] = state[1]
+    else:
+      for i, (c, h) in enumerate(model.initial_state):
+        feed_dict[c] = state[i].c
+        feed_dict[h] = state[i].h
 
     vals = session.run(fetches, feed_dict)
     cost = vals["cost"]
@@ -340,31 +241,25 @@ def run_epoch(session, model, eval_op=None, verbose=False):
   return np.exp(costs / iters)
 
 
-#def main(_):
-  # gpus = [
-  #     x.name for x in device_lib.list_local_devices() if x.device_type == "GPU"
-  # ]
-  # if FLAGS.num_gpus > len(gpus):
-  #   raise ValueError(
-  #       "Your machine has only %d gpus "
-  #       "which is less than the requested --num_gpus=%d."
-  #       % (len(gpus), FLAGS.num_gpus))
-
-
 if __name__ == "__main__":
-  data_path='/home/amir/tau/deep_learning/ptb/'
-  save_path='/home/amir/tau/deep_learning/ptb/save_path'
-  raw_data = reader.ptb_raw_data(data_path)
-  train_data, valid_data, test_data, _ = raw_data
-
   config = ModelConfig()
   eval_config = ModelConfig()
   eval_config.batch_size = 1
   eval_config.num_steps = 1
 
+  data_path='C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB'
+
+  if config.is_GRU:
+    save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\GRU'
+  else:
+    save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\LSTM'
+
+  raw_data = reader.ptb_raw_data(data_path)
+  train_data, valid_data, test_data, _ = raw_data
+
+
   with tf.Graph().as_default():
-    initializer = tf.random_uniform_initializer(-config.init_scale,
-                                                config.init_scale)
+    initializer = tf.random_uniform_initializer(-config.init_scale, config.init_scale)
 
     with tf.name_scope("Train"):
       train_input = PTBInput(config=config, data=train_data, name="TrainInput")
@@ -380,28 +275,13 @@ if __name__ == "__main__":
       tf.summary.scalar("Validation Loss", mvalid.cost)
 
     with tf.name_scope("Test"):
-      test_input = PTBInput(
-          config=eval_config, data=test_data, name="TestInput")
+      test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
       with tf.variable_scope("Model", reuse=True, initializer=initializer):
-        mtest = PTBModel(is_training=False, config=eval_config,
-                         input_=test_input)
+        mtest = PTBModel(is_training=False, config=eval_config, input_=test_input)
 
     models = {"Train": m, "Valid": mvalid, "Test": mtest}
-    for name, model in models.items():
-      model.export_ops(name)
-    metagraph = tf.train.export_meta_graph()
-    # if tf.__version__ < "1.1.0" and FLAGS.num_gpus > 1:
-    #   raise ValueError("num_gpus > 1 is not supported for TensorFlow versions "
-    #                    "below 1.1.0")
     soft_placement = False
-    # if FLAGS.num_gpus > 1:
-    #   soft_placement = True
-    #   util.auto_parallel(metagraph, m)
 
-  with tf.Graph().as_default():
-    tf.train.import_meta_graph(metagraph)
-    for model in models.values():
-      model.import_ops()
     sv = tf.train.Supervisor(logdir=save_path)
     config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
     with sv.managed_session(config=config_proto) as session:
@@ -410,18 +290,17 @@ if __name__ == "__main__":
         m.assign_lr(session, config.learning_rate * lr_decay)
 
         print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-        train_perplexity = run_epoch(session, m, eval_op=m.train_op,
-                                     verbose=True)
+        train_perplexity = run_epoch(session, m, config, eval_op=m.train_op, verbose=True)
         print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-        valid_perplexity = run_epoch(session, mvalid)
+        valid_perplexity = run_epoch(session, mvalid, config)
         print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-      test_perplexity = run_epoch(session, mtest)
+      test_perplexity = run_epoch(session, mtest, config)
       print("Test Perplexity: %.3f" % test_perplexity)
 
-      if save_path:
-        print("Saving model to %s." % save_path)
-        sv.saver.save(session, save_path, global_step=sv.global_step)
+      # if save_path:
+      #   print("Saving model to %s." % save_path)
+      #   sv.saver.save(session, save_path, global_step=sv.global_step)
 
 
 # if __name__ == "__main__":
