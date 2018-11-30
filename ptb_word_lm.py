@@ -170,12 +170,12 @@ class PTBModel(object):
 
   def _get_lstm_cell(self, config, is_training):
     # if config.rnn_mode == BASIC:
-    # return tf.contrib.rnn.BasicLSTMCell(
-    #       config.hidden_size, forget_bias=0.0, state_is_tuple=True,
-    #       reuse=not is_training)
+    return tf.contrib.rnn.BasicLSTMCell(
+          config.hidden_size, forget_bias=0.0, state_is_tuple=True,
+          reuse=not is_training)
     # if config.rnn_mode == BLOCK:
-    return tf.contrib.rnn.LSTMBlockCell(
-          config.hidden_size, forget_bias=0.0)
+    #return tf.contrib.rnn.LSTMBlockCell(
+    #      config.hidden_size, forget_bias=0.0)
     # raise ValueError("rnn_mode %s not supported" % config.rnn_mode)
 
   def _build_rnn_graph_lstm(self, inputs, config, is_training):
