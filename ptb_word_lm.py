@@ -402,7 +402,7 @@ if __name__ == "__main__":
     tf.train.import_meta_graph(metagraph)
     for model in models.values():
       model.import_ops()
-    sv = tf.train.Supervisor(logdir=FLAGS.save_path)
+    sv = tf.train.Supervisor(logdir=save_path)
     config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
     with sv.managed_session(config=config_proto) as session:
       for i in range(config.max_max_epoch):
@@ -419,9 +419,9 @@ if __name__ == "__main__":
       test_perplexity = run_epoch(session, mtest)
       print("Test Perplexity: %.3f" % test_perplexity)
 
-      if FLAGS.save_path:
-        print("Saving model to %s." % FLAGS.save_path)
-        sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
+      if save_path:
+        print("Saving model to %s." % save_path)
+        sv.saver.save(session, save_path, global_step=sv.global_step)
 
 
 # if __name__ == "__main__":
