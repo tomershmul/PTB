@@ -53,7 +53,7 @@ $ tar xvf simple-examples.tgz
 To run:
 
 $ python ptb_word_lm.py --data_path=simple-examples/data/
-
+--data_path=/home/amir/tau/deep_learning/ptb/ --save_path=/home/amir/tau/deep_learning/ptb/save_path --num_gpus=0
 """
 # from __future__ import absolute_import
 # from __future__ import division
@@ -340,7 +340,7 @@ def run_epoch(session, model, eval_op=None, verbose=False):
   return np.exp(costs / iters)
 
 
-def main(_):
+#def main(_):
   # gpus = [
   #     x.name for x in device_lib.list_local_devices() if x.device_type == "GPU"
   # ]
@@ -350,8 +350,10 @@ def main(_):
   #       "which is less than the requested --num_gpus=%d."
   #       % (len(gpus), FLAGS.num_gpus))
 
-  data_path='/home/amir/tau/deep_learnign/ptb'
-  save_path='/home/amir/tau/deep_learnign/ptb/save_path'
+
+if __name__ == "__main__":
+  data_path='/home/amir/tau/deep_learning/ptb/'
+  save_path='/home/amir/tau/deep_learning/ptb/save_path'
   raw_data = reader.ptb_raw_data(data_path)
   train_data, valid_data, test_data, _ = raw_data
 
@@ -422,5 +424,5 @@ def main(_):
         sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
 
 
-if __name__ == "__main__":
-  tf.app.run()
+# if __name__ == "__main__":
+#   tf.app.run()
