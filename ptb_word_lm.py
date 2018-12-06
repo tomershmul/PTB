@@ -35,6 +35,7 @@ from tensorflow.python.client import device_lib
 flags = tf.flags
 logging = tf.logging
 FLAGS = flags.FLAGS
+LOG_DIR = 'save_path'
 
 class ModelConfig(object):
   """Small config."""
@@ -102,6 +103,7 @@ class PTBModel(object):
     # Update the cost
     self._cost = tf.reduce_sum(loss)
     self._final_state = state
+    self._prex = tf.exp(self._cost / (self._input.epoch_size*self._input.num_steps))
 
     if not is_training:
       return
@@ -185,6 +187,10 @@ class PTBModel(object):
     return self._cost
 
   @property
+  def prex(self):
+    return self._prex
+
+  @property
   def final_state(self):
     return self._final_state
 
@@ -204,18 +210,18 @@ class PTBModel(object):
   def final_state_name(self):
     return self._final_state_name
 
-def run_epoch(session, model, config, eval_op=None, verbose=False):
+def run_epoch(session, model, config, prex_sum=None, eval_op=None, verbose=False):
   """Runs the model on the given data."""
   start_time = time.time()
   costs = 0.0
   iters = 0
   state = session.run(model.initial_state)
 
-  fetches = {"cost": model.cost, "final_state": model.final_state}
+  fetches = {"prex_sum": prex_sum, "prex": model.prex, "cost": model.cost, "final_state": model.final_state}
   if eval_op is not None:
     fetches["eval_op"] = eval_op
 
-  for step in range(model.input.epoch_size):
+  for step in range(2): #model.input.epoch_size):
     feed_dict = {}
     if config.is_GRU:
       feed_dict[model.initial_state[0]] = state[0]
@@ -238,7 +244,11 @@ def run_epoch(session, model, config, eval_op=None, verbose=False):
              iters * model.input.batch_size /
              (time.time() - start_time)))
 
-  return np.exp(costs / iters)
+  #prex_sum = vals["prex_sum"]
+  #writer.add_summary(prex_sum, i)
+  #prex_s = tf.summary.scalar("Prex", prex)
+  #return prex_s
+  return vals["prex"], vals["prex_sum"] #np.exp(costs / iters)
 
 
 if __name__ == "__main__":
@@ -247,18 +257,18 @@ if __name__ == "__main__":
   eval_config.batch_size = 1
   eval_config.num_steps = 1
 
-  #data_path='/home/amir/tau/deep_learning/ptb/'
-  #if config.is_GRU:
-  #  save_path='/home/amir/tau/deep_learning/ptb/save_path/GRU'
-  #else:
-  #  save_path='/home/amir/tau/deep_learning/ptb/save_path/LSTM'
-
-  data_path='C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB'
-
+  data_path='/home/amir/tau/deep_learning/ptb/'
   if config.is_GRU:
-    save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\GRU'
+   save_path='/home/amir/tau/deep_learning/ptb/save_path/GRU'
   else:
-    save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\LSTM'
+   save_path='/home/amir/tau/deep_learning/ptb/save_path/LSTM'
+
+  # data_path='C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB'
+  #
+  # if config.is_GRU:
+  #   save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\GRU'
+  # else:
+  #   save_path = 'C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB\\save_path\\LSTM'
 
   raw_data = reader.ptb_raw_data(data_path)
   train_data, valid_data, test_data, _ = raw_data
@@ -273,12 +283,14 @@ if __name__ == "__main__":
         m = PTBModel(is_training=True, config=config, input_=train_input)
       tf.summary.scalar("Training Loss", m.cost)
       tf.summary.scalar("Learning Rate", m.lr)
+      train_prex_sum = tf.summary.scalar("Training PreX", m.prex) #tf.exp(m.cost / (m.input.epoch_size*m.input.num_steps)))
 
     with tf.name_scope("Valid"):
       valid_input = PTBInput(config=config, data=valid_data, name="ValidInput")
       with tf.variable_scope("Model", reuse=True, initializer=initializer):
         mvalid = PTBModel(is_training=False, config=config, input_=valid_input)
       tf.summary.scalar("Validation Loss", mvalid.cost)
+      valid_prex_sum = tf.summary.scalar("Validation PreX", mvalid.prex) #tf.exp(mvalid.cost / (mvalid.input.epoch_size*mvalid.input.num_steps)))
 
     with tf.name_scope("Test"):
       test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
@@ -291,15 +303,21 @@ if __name__ == "__main__":
     sv = tf.train.Supervisor(logdir=save_path)
     config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
     with sv.managed_session(config=config_proto) as session:
+      train_writer = tf.summary.FileWriter(LOG_DIR + '/train_'
+                                       + 'lstm_no_drop', session.graph)
+      validation_writer = tf.summary.FileWriter(LOG_DIR + '/validation_'
+                                            + 'lstm_no_drop', session.graph)
       for i in range(config.max_max_epoch):
         lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
         m.assign_lr(session, config.learning_rate * lr_decay)
 
         print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-        train_perplexity = run_epoch(session, m, config, eval_op=m.train_op, verbose=True)
+        train_perplexity, train_prex_sum = run_epoch(session, m, config, train_prex_sum, eval_op=m.train_op, verbose=True)
         print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-        valid_perplexity = run_epoch(session, mvalid, config)
+        train_writer.add_summary(train_prex_sum, i)
+        valid_perplexity, valid_prex_sum = run_epoch(session, mvalid, config, valid_prex_sum)
         print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
+        validation_writer.add_summary(valid_prex_sum, i)
 
       test_perplexity = run_epoch(session, mtest, config)
       print("Test Perplexity: %.3f" % test_perplexity)
@@ -308,6 +326,8 @@ if __name__ == "__main__":
         print("Saving model to %s." % save_path)
         sv.saver.save(session, save_path, global_step=sv.global_step)
 
+    train_writer.close()
+    validation_writer.close()
 
 # if __name__ == "__main__":
 #   tf.app.run()
