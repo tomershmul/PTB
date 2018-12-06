@@ -247,6 +247,12 @@ if __name__ == "__main__":
   eval_config.batch_size = 1
   eval_config.num_steps = 1
 
+  #data_path='/home/amir/tau/deep_learning/ptb/'
+  #if config.is_GRU:
+  #  save_path='/home/amir/tau/deep_learning/ptb/save_path/GRU'
+  #else:
+  #  save_path='/home/amir/tau/deep_learning/ptb/save_path/LSTM'
+
   data_path='C:\\Users\\tomer\\Documents\\TAU\\Deep_Learning\\EX2\\PTB'
 
   if config.is_GRU:
@@ -298,9 +304,9 @@ if __name__ == "__main__":
       test_perplexity = run_epoch(session, mtest, config)
       print("Test Perplexity: %.3f" % test_perplexity)
 
-      # if save_path:
-      #   print("Saving model to %s." % save_path)
-      #   sv.saver.save(session, save_path, global_step=sv.global_step)
+      if save_path:
+        print("Saving model to %s." % save_path)
+        sv.saver.save(session, save_path, global_step=sv.global_step)
 
 
 # if __name__ == "__main__":
